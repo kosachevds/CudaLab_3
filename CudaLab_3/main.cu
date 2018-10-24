@@ -1,13 +1,11 @@
-#include "cuda_runtime.h"
-#include "device_launch_parameters.h"
+#include <cstdlib>
+#include <ctime>
 
-
-__global__ void addKernel()
-{
-
-}
+extern void task1();
 
 int main()
 {
+    srand(time(nullptr));
+    task1();
     return 0;
 }
