@@ -45,9 +45,9 @@ void task1()
     fillRandom(values, 8192 * SHARED_BLOCK_SIZE);
     float ms;
     auto min_cpu = getMinCpu(values, &ms);
-    std::cout << "CPU: " << min_cpu << " " << ms << std::endl;
+    std::cout << "CPU: " << min_cpu << " " << ms << " ms." << std::endl;
     auto min_gpu = getMinGpu(values, &ms);
-    std::cout << "GPU: " << min_gpu << " " << ms << std::endl;
+    std::cout << "GPU: " << min_gpu << " " << ms << " ms." << std::endl;
 }
 
 unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
