@@ -153,6 +153,7 @@ copy "$(CudaToolkitBinDir)\cudart*.dll" "$(OutDir)"</Command>
   <ItemGroup>
     <CudaCompile Include="main.cu" />
     <CudaCompile Include="task1.cu" />
+    <CudaCompile Include="task2.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="common.h" />
