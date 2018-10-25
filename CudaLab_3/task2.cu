@@ -24,7 +24,7 @@ void writeVector(std::vector<unsigned> const& values, std::ostream& out);
 void task2()
 {
     auto values = std::vector<unsigned>();
-    fillWithNormalDistribution(values, 1024);
+    fillWithNormalDistribution(values, 1024 * 1024);
     auto histogram = std::vector<unsigned>();
     fillHistogramCpu(values, histogram);
     std::ofstream out("hist.txt");
