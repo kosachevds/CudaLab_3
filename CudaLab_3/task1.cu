@@ -11,26 +11,25 @@ const size_t SHARED_BLOCK_SIZE = 1024;
 
 __global__ void reduceMin(unsigned* inData, unsigned* outData, size_t size)
 {
-    __shared__ uint32_t data[SHARED_BLOCK_SIZE];
-    auto tid = threadIdx.x;
-    auto i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i > size) {
-        return;
+    __shared__ unsigned shared [SHARED_BLOCK_SIZE];
+    int tid = threadIdx.x;
+    int i = 2 * blockIdx.x * blockDim.x + threadIdx.x;
+    if (i + i + blockDim.x < size && inData[i + blockDim.x] < inData[i]) {
+        shared[tid] = inData[i + blockDim.x];
+    } else {
+        shared[tid] = inData[i];
     }
-    data[tid] = inData[i]; // load into shared memory
     __syncthreads();
-    for (int s = 1; s < blockDim.x; s <<= 1) {
-    //for (int s = 1; s < size; s <<= 1) {
-        int index = 2 * s * tid;
-        if (index < blockDim.x) {
-            if (data[index + s] < data[index]) {
-                data[index] = data[index + s];
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            if (shared[tid + s] < shared[tid]) {
+                shared[tid] = shared[tid + s];
             }
         }
         __syncthreads();
     }
-    if (tid == 0) { // write result of block reduction
-        outData[blockIdx.x] = data[0];
+    if (tid == 0) {
+        outData[blockIdx.x] = shared[0];
     }
 }
 
@@ -43,12 +42,12 @@ void fillRandom(std::vector<unsigned>& values, size_t size);
 void task1()
 {
     std::vector<unsigned> values;
-    fillRandom(values, SHARED_BLOCK_SIZE);
+    fillRandom(values, 8192 * SHARED_BLOCK_SIZE);
     float ms;
     auto min_cpu = getMinCpu(values, &ms);
-    std::cout << min_cpu << " " << ms << std::endl;
+    std::cout << "CPU: " << min_cpu << " " << ms << std::endl;
     auto min_gpu = getMinGpu(values, &ms);
-    std::cout << min_gpu << " " << ms << std::endl;
+    std::cout << "GPU: " << min_gpu << " " << ms << std::endl;
 }
 
 unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
@@ -56,15 +55,21 @@ unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
     auto min_value = values.front();
     auto start = std::chrono::high_resolution_clock::now();
     //auto min_value = *std::min_element(values.begin(), values.end());
-    for (auto value: values) {
-        if (value < min_value) {
-            min_value = value;
+    //std::this_thread::sleep_for(std::chrono::microseconds(10LL));
+    //for (auto value: values) {
+    //    if (value < min_value) {
+    //        min_value = value;
+    //    }
+    //}
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (values[i] < min_value) {
+            min_value = values[i];
         }
     }
     auto end = std::chrono::high_resolution_clock::now();
-    auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     if (ms_out != nullptr) {
-        *ms_out = static_cast<float>(us.count() / 1000.0);
+        *ms_out = ns.count() / 1.0e6F;
     }
     return min_value;
 }
@@ -72,27 +77,38 @@ unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
 unsigned getMinGpu(std::vector<unsigned> const& values, float* ms_out)
 {
     auto gpu_values = thrust::device_vector<unsigned>(values);
-    auto out_vector = thrust::device_vector<unsigned>(1u); // TODO: with pointer
+    auto out_ptr = thrust::device_malloc<unsigned>(1);
     auto raw_gpu_values = thrust::raw_pointer_cast(gpu_values.data());
-    auto raw_out = thrust::raw_pointer_cast(out_vector.data());
-    // TODO: extend to 2^n size
-    // TODO: split array for SHARED_BLOCK_SIZE subarrays and find min in each
+    auto raw_out = thrust::raw_pointer_cast(out_ptr);
+
     cudaEvent_t start, end;
     cudaEventCreate(&start);
     cudaEventCreate(&end);
-    unsigned block_count = ceil(static_cast<double>(values.size()) / SHARED_BLOCK_SIZE);
-    cudaEventRecord(start);
-    reduceMin<<<block_count, SHARED_BLOCK_SIZE>>>(raw_gpu_values, raw_out, values.size());
-    cudaEventRecord(end);
-    cudaEventSynchronize(end);
+    float ms = 0;
     if (ms_out != nullptr) {
-        cudaEventElapsedTime(ms_out, start, end);
+        *ms_out = 0.0F;
     }
+    auto min_value = values.front();
+    for (size_t i = 0; i < values.size(); i += SHARED_BLOCK_SIZE) {
+        cudaEventRecord(start);
+        reduceMin<<<1u, SHARED_BLOCK_SIZE>>>
+            (raw_gpu_values + i, raw_out, SHARED_BLOCK_SIZE);
+        cudaEventRecord(end);
+        cudaEventSynchronize(end);
+        cudaEventElapsedTime(&ms, start, end);
+        if (ms_out != nullptr) {
+            *ms_out += ms;
+        }
+        auto block_min = out_ptr[0];
+        if (block_min < min_value) {
+            min_value = block_min;
+        }
+    }
+    thrust::device_free(out_ptr);
     cudaEventDestroy(start);
     cudaEventDestroy(end);
-    auto cpu_out = thrust::host_vector<unsigned>(out_vector);
     std::cout << std::endl;
-    return out_vector.front();
+    return min_value;
 }
 
 void fillRandom(std::vector<unsigned>& values, size_t size)
