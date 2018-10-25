@@ -11,6 +11,7 @@ const size_t SHARED_BLOCK_SIZE = 1024;
 
 __global__ void reduceMin(unsigned const* inData, unsigned* outData)
 {
+    // TODO: as figure 3.8
     __shared__ unsigned shared [SHARED_BLOCK_SIZE];
     int tid = threadIdx.x;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
