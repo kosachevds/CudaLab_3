@@ -9,16 +9,16 @@
 
 const size_t SHARED_BLOCK_SIZE = 1024;
 
-__global__ void reduceMin(unsigned* inData, unsigned* outData, size_t size)
+__global__ void reduceMin(unsigned const* inData, unsigned* outData)
 {
     __shared__ unsigned shared [SHARED_BLOCK_SIZE];
     int tid = threadIdx.x;
-    int i = 2 * blockIdx.x * blockDim.x + threadIdx.x;
-    if (i + blockDim.x < size && inData[i + blockDim.x] < inData[i]) {
-        shared[tid] = inData[i + blockDim.x];
-    } else {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    //if (i + blockDim.x < blockDim.x && inData[i + blockDim.x] < inData[i]) {
+    //    shared[tid] = inData[i + blockDim.x];
+    //} else {
         shared[tid] = inData[i];
-    }
+    //}
     __syncthreads();
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
@@ -77,34 +77,30 @@ unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
 unsigned getMinGpu(std::vector<unsigned> const& values, float* ms_out)
 {
     auto gpu_values = thrust::device_vector<unsigned>(values);
-    auto out_ptr = thrust::device_malloc<unsigned>(1);
     auto raw_gpu_values = thrust::raw_pointer_cast(gpu_values.data());
-    auto raw_out = thrust::raw_pointer_cast(out_ptr);
 
     cudaEvent_t start, end;
     cudaEventCreate(&start);
     cudaEventCreate(&end);
-    float ms = 0;
+    auto block_count = values.size() / SHARED_BLOCK_SIZE;
+    auto out_gpu = thrust::device_vector<unsigned>(block_count);
+    auto out_raw = thrust::raw_pointer_cast(out_gpu.data());
+
+    cudaEventRecord(start);
+    reduceMin<<<block_count, SHARED_BLOCK_SIZE>>>
+        (raw_gpu_values, out_raw);
+    cudaEventRecord(end);
+    cudaEventSynchronize(end);
+    float ms1;
+    cudaEventElapsedTime(&ms1, start, end);
+
+    auto out_cpu = thrust::host_vector<unsigned>(out_gpu);
+    float ms2;
+    auto min_value = getMinCpu({ out_cpu.begin(), out_cpu.end() }, &ms2);
     if (ms_out != nullptr) {
-        *ms_out = 0.0F;
+        *ms_out = ms1 + ms2;
     }
-    auto min_value = values.front();
-    for (size_t i = 0; i < values.size(); i += SHARED_BLOCK_SIZE) {
-        cudaEventRecord(start);
-        reduceMin<<<1u, SHARED_BLOCK_SIZE>>>
-            (raw_gpu_values + i, raw_out, SHARED_BLOCK_SIZE);
-        cudaEventRecord(end);
-        cudaEventSynchronize(end);
-        cudaEventElapsedTime(&ms, start, end);
-        if (ms_out != nullptr) {
-            *ms_out += ms;
-        }
-        auto block_min = out_ptr[0];
-        if (block_min < min_value) {
-            min_value = block_min;
-        }
-    }
-    thrust::device_free(out_ptr);
+
     cudaEventDestroy(start);
     cudaEventDestroy(end);
     std::cout << std::endl;
