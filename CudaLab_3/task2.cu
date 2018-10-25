@@ -17,7 +17,7 @@ __global__ void histogramKernel( unsigned * result, unsigned * data, int n )
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void fillHistogramCpu(std::vector<unsigned> const& values, std::vector<unsigned>& histogram);
+float fillHistogramCpu(std::vector<unsigned> const& values, std::vector<unsigned>& histogram);
 void fillWithNormalDistribution(std::vector<unsigned>& values, size_t size);
 void writeVector(std::vector<unsigned> const& values, std::ostream& out);
 
@@ -26,18 +26,23 @@ void task2()
     auto values = std::vector<unsigned>();
     fillWithNormalDistribution(values, 1024 * 1024);
     auto histogram = std::vector<unsigned>();
-    fillHistogramCpu(values, histogram);
+    std::cout << "CPU: " << fillHistogramCpu(values, histogram) << " ms" << std::endl;
+
     std::ofstream out("hist.txt");
     writeVector(histogram, out);
     out.close();
 }
 
-void fillHistogramCpu(std::vector<unsigned> const& values, std::vector<unsigned>& histogram)
+float fillHistogramCpu(std::vector<unsigned> const& values, std::vector<unsigned>& histogram)
 {
+    auto start = std::chrono::high_resolution_clock::now();
     histogram.resize(HISTOGRAM_SIZE, 0u);
     for (auto item : values) {
         ++histogram[item];
     }
+    auto end = std::chrono::high_resolution_clock::now();
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+    return ns.count() / 1.0e6f;
 }
 
 void fillWithNormalDistribution(std::vector<unsigned>& values, size_t size)
