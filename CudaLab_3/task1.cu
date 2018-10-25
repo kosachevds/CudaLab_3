@@ -14,7 +14,7 @@ __global__ void reduceMin(unsigned* inData, unsigned* outData, size_t size)
     __shared__ unsigned shared [SHARED_BLOCK_SIZE];
     int tid = threadIdx.x;
     int i = 2 * blockIdx.x * blockDim.x + threadIdx.x;
-    if (i + i + blockDim.x < size && inData[i + blockDim.x] < inData[i]) {
+    if (i + blockDim.x < size && inData[i + blockDim.x] < inData[i]) {
         shared[tid] = inData[i + blockDim.x];
     } else {
         shared[tid] = inData[i];
