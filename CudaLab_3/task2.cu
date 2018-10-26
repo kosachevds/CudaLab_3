@@ -14,16 +14,16 @@
 #define       WARP_SIZE  (32)
 #define  WARP_PER_BLOCK  (32) // MAX_BLOCK_SIZE / WARP_SIZE
 
-float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram);
-float createHistogramGpu(std::vector<uint32_t> const& data, std::vector<uint32_t>& histogram);
-void fillWithNormalDistribution(std::vector<uint32_t>& values, size_t size);
+static float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram);
+static float createHistogramGpu(std::vector<uint32_t> const& data, std::vector<uint32_t>& histogram);
+static void fillWithNormalDistribution(std::vector<uint32_t>& values, size_t size);
 template <typename T>
-void writeVector(std::vector<T> const& values, std::ostream& out);
-void createOnce(size_t size);
-void createMany(size_t min_size, size_t max_size, size_t step);
-__global__ void blockHistogram(uint32_t* result, uint32_t const* data, size_t size);
-__global__ void mergeHistogramKernel(uint32_t const* partial_histograms, uint32_t* out_histogram);
-__device__ inline void addByte(volatile uint32_t* warp_hist, uint32_t index, uint32_t tag);
+static void writeVector(std::vector<T> const& values, std::ostream& out);
+static void createOnce(size_t size);
+static void createMany(size_t min_size, size_t max_size, size_t step);
+static __global__ void blockHistogram(uint32_t* result, uint32_t const* data, size_t size);
+static __global__ void mergeHistogramKernel(uint32_t const* partial_histograms, uint32_t* out_histogram);
+static __device__ void addByte(volatile uint32_t* warp_hist, uint32_t index, uint32_t tag);
 
 void Task2()
 {
@@ -182,7 +182,7 @@ __global__ void mergeHistogramKernel(uint32_t const* partial_histograms, uint32_
     }
 }
 
-__device__ inline void addByte(volatile uint32_t* warp_hist, uint32_t index, uint32_t tag)
+__device__ void addByte(volatile uint32_t* warp_hist, uint32_t index, uint32_t tag)
 {
     uint32_t count;
     do {
