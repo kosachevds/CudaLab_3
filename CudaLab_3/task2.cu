@@ -14,11 +14,12 @@
 #define       WARP_SIZE  (32)
 #define  WARP_PER_BLOCK  (32) // MAX_BLOCK_SIZE / WARP_SIZE
 
+template <typename T>
+void WriteVector(std::vector<T> const& values, std::ostream& out);
+
 static float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram);
 static float createHistogramGpu(std::vector<uint32_t> const& data, std::vector<uint32_t>& histogram);
 static void fillWithNormalDistribution(std::vector<uint32_t>& values, size_t size);
-template <typename T>
-static void writeVector(std::vector<T> const& values, std::ostream& out);
 static void createOnce(size_t size);
 static void createMany(size_t min_size, size_t max_size, size_t step);
 static __global__ void blockHistogram(uint32_t* result, uint32_t const* data, size_t size);
@@ -85,7 +86,7 @@ void fillWithNormalDistribution(std::vector<uint32_t>& values, size_t size)
 }
 
 template <typename T>
-void writeVector(std::vector<T> const& values, std::ostream& out)
+void WriteVector(std::vector<T> const& values, std::ostream& out)
 {
     for (auto const& item: values) {
         out << item << " ";
@@ -95,10 +96,8 @@ void writeVector(std::vector<T> const& values, std::ostream& out)
 
 void createOnce(size_t size)
 {
-    auto values = std::vector<uint32_t>();
+    std::vector<uint32_t> values, cpu_histogram, gpu_histogram;
     fillWithNormalDistribution(values, size);
-    auto cpu_histogram = std::vector<uint32_t>();
-    auto gpu_histogram = std::vector<uint32_t>();
 
     std::cout << "CPU: " << createHistogramCpu(values, cpu_histogram) << " ms.\n";
     std::cout << "GPU: " << createHistogramGpu(values, gpu_histogram) << " ms.\n";
@@ -126,9 +125,9 @@ void createMany(size_t min_size, size_t max_size, size_t step)
         system("cls");
     }
     std::ofstream out("times2.txt");
-    writeVector(times_cpu, out);
+    WriteVector(times_cpu, out);
     out << ";";
-    writeVector(times_gpu, out);
+    WriteVector(times_gpu, out);
     out.close();
 }
 

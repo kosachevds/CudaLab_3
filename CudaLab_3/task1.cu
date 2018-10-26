@@ -6,49 +6,24 @@
 #include <chrono>
 #include <algorithm>
 #include <iostream>
+#include <fstream>
 
 const size_t SHARED_BLOCK_SIZE = 1024;
 
-__global__ void reduceMin(unsigned const* inData, unsigned* outData)
-{
-    // TODO: as figure 3.8
-    __shared__ unsigned shared [SHARED_BLOCK_SIZE];
-    int tid = threadIdx.x;
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    //if (i + blockDim.x < blockDim.x && inData[i + blockDim.x] < inData[i]) {
-    //    shared[tid] = inData[i + blockDim.x];
-    //} else {
-        shared[tid] = inData[i];
-    //}
-    __syncthreads();
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (tid < s) {
-            if (shared[tid + s] < shared[tid]) {
-                shared[tid] = shared[tid + s];
-            }
-        }
-        __syncthreads();
-    }
-    if (tid == 0) {
-        outData[blockIdx.x] = shared[0];
-    }
-}
+template <typename T>
+extern void WriteVector(std::vector<T> const& values, std::ostream& out);
 
-///////////////////////////////////////////////////////////////////////////////
-
-unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out);
-unsigned getMinGpu(std::vector<unsigned> const& values, float* ms_out);
-void fillRandom(std::vector<unsigned>& values, size_t size);
+static unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out);
+static unsigned getMinGpu(std::vector<unsigned> const& values, float* ms_out);
+static void fillRandom(std::vector<unsigned>& values, size_t size);
+static void createOnce(size_t size);
+static void createMany(size_t min_size, size_t max_size, size_t step);
+static __global__ void reduceMin(unsigned const* inData, unsigned* outData);
 
 void Task1()
 {
-    std::vector<unsigned> values;
-    fillRandom(values, 8192 * SHARED_BLOCK_SIZE);
-    float ms;
-    auto min_cpu = getMinCpu(values, &ms);
-    std::cout << "CPU: " << min_cpu << " " << ms << " ms." << std::endl;
-    auto min_gpu = getMinGpu(values, &ms);
-    std::cout << "GPU: " << min_gpu << " " << ms << " ms." << std::endl;
+    //createOnce(8192 * SHARED_BLOCK_SIZE);
+    createMany(SHARED_BLOCK_SIZE, 1024 * SHARED_BLOCK_SIZE, SHARED_BLOCK_SIZE);
 }
 
 unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
@@ -114,5 +89,62 @@ void fillRandom(std::vector<unsigned>& values, size_t size)
     auto add = size / (rand() % size + 1);
     for (size_t i = 0; i < size; ++i) {
         values[i] = rand() % (2 * size) + add;
+    }
+}
+
+void createOnce(size_t size)
+{
+    std::vector<unsigned> values;
+    fillRandom(values, size);
+    float ms;
+    auto min_cpu = getMinCpu(values, &ms);
+    std::cout << "CPU: " << min_cpu << " " << ms << " ms." << std::endl;
+    auto min_gpu = getMinGpu(values, &ms);
+    std::cout << "GPU: " << min_gpu << " " << ms << " ms." << std::endl;
+}
+
+void createMany(size_t min_size, size_t max_size, size_t step)
+{
+    std::vector<float> times_cpu, times_gpu;
+    for (auto size = min_size; size <= max_size; size += step) {
+        std::cout << size << ": " << max_size << std::endl;
+        std::vector<uint32_t> values, histogram;
+        fillRandom(values, size);
+        float ms;
+        getMinCpu(values, &ms);
+        times_cpu.push_back(ms);
+        getMinGpu(values, &ms);
+        times_gpu.push_back(ms);
+        system("cls");
+    }
+    std::ofstream out("times1.txt");
+    WriteVector(times_cpu, out);
+    out << ";";
+    WriteVector(times_gpu, out);
+    out.close();
+}
+
+__global__ void reduceMin(unsigned const* inData, unsigned* outData)
+{
+    // TODO: as figure 3.8
+    __shared__ unsigned shared [SHARED_BLOCK_SIZE];
+    int tid = threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    //if (i + blockDim.x < blockDim.x && inData[i + blockDim.x] < inData[i]) {
+    //    shared[tid] = inData[i + blockDim.x];
+    //} else {
+        shared[tid] = inData[i];
+    //}
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            if (shared[tid + s] < shared[tid]) {
+                shared[tid] = shared[tid + s];
+            }
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        outData[blockIdx.x] = shared[0];
     }
 }
