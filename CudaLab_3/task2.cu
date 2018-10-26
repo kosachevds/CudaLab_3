@@ -7,100 +7,95 @@
 #include <iostream>
 #include <fstream>
 
-const auto HISTOGRAM_SIZE = 256;
+#define      COUNT_MASK  (0x07FFFFFFu);
+#define  MAX_BLOCK_SIZE  (1024u)
+#define  HISTOGRAM_SIZE  (256)
+#define  LOG2_WARP_SIZE  (5)
+#define       WARP_SIZE  (32)
+#define  WARP_PER_BLOCK  (32) // MAX_BLOCK_SIZE / WARP_SIZE
 
-#define              N  (6*1024*1024)
-#define       NUM_BINS  (256)  // число счетчиков в гистограмме
-#define LOG2_WARP_SIZE  (5)    // логарифм размера warp's по основанию 2
-#define      WARP_SIZE  (32)   // Размер warp'а
-#define         WARP_N  (6)    // Число warp'ов в блоке
-
-__device__ inline void addByte(volatile unsigned* warp_hist, unsigned data, unsigned ttag)
+__device__ inline void addByte(volatile uint32_t* warp_hist, uint32_t index, uint32_t ttag)
 {
-    unsigned count;
+    uint32_t count;
     do {
         // прочесть текущее значение счетчика и снять идентификатор нити
-        count = warp_hist[data] & 0x07FFFFFFU;
+        count = warp_hist[index] & COUNT_MASK;
         // увеличить его на единицу и поставить свой идентификатор
         count = ttag | (count + 1);
-        warp_hist[data] = count; //осуществить запись
-    } while (warp_hist[data] != count); // проверить, прошла ли запись
+        warp_hist[index] = count; //осуществить запись
+    } while (warp_hist[index] != count); // проверить, прошла ли запись
 }
 
-
-__global__ void histogramKernel(unsigned* result, unsigned const* data, size_t n)
+__global__ void blockHistogram(uint32_t* result, uint32_t const* data, size_t size)
 {
-    __shared__ unsigned hist[NUM_BINS * WARP_N]; //1536 элементов
-    // очистить счетчики гистограмм
-    for (int i = 0; i < NUM_BINS / WARP_SIZE; i++)
-        hist[threadIdx.x + i * WARP_N * WARP_SIZE/*число нитей в блоке=192*/] = 0;
-    int warp_base = (threadIdx.x >> LOG2_WARP_SIZE) * NUM_BINS;
-    unsigned ttag = threadIdx.x << (32 - LOG2_WARP_SIZE); // получить id для данной нити
+    __shared__ uint32_t shared_hist[HISTOGRAM_SIZE * WARP_PER_BLOCK];  // 8192
+    for (size_t i = 0; i < HISTOGRAM_SIZE / WARP_SIZE; ++i) {
+        shared_hist[threadIdx.x + i * MAX_BLOCK_SIZE] = 0;
+    }
+    auto warp_index = threadIdx.x >> LOG2_WARP_SIZE;
+    auto idex_shift = warp_index * HISTOGRAM_SIZE;
+    auto tag = threadIdx.x << (32 - LOG2_WARP_SIZE);
     __syncthreads();
-    int global_tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int numThreads = blockDim.x * gridDim.x;
-    for (int i = global_tid; i < n; i += numThreads) {
-        unsigned data4 = data[i];
-        addByte(hist + warp_base, (data4 >> 0) & 0xFFU, ttag);
-        addByte(hist + warp_base, (data4 >> 8) & 0xFFU, ttag);
-        addByte(hist + warp_base, (data4 >> 16) & 0xFFU, ttag);
-        addByte(hist + warp_base, (data4 >> 24) & 0xFFU, ttag);
+    auto global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+    auto thread_count = blockDim.x * gridDim.x;
+    for (size_t i = global_tid; i < size; i += thread_count) {
+        addByte(shared_hist + idex_shift, data[i], tag);
     }
     __syncthreads();
-    // объединить гистограммы данного блока и записать результат в глобальную память
-    // 192 нити суммируют данные до 256 элементов гистограмм
-    for (int bin = threadIdx.x; bin < NUM_BINS; bin += (WARP_N * WARP_SIZE)) {
-        unsigned sum = 0;
-        for (int i = 0; i < WARP_N; i++)
-            sum += hist[bin + i * NUM_BINS] & 0x07FFFFFFU;
-        result[blockIdx.x * NUM_BINS + bin] = sum;
+    if (threadIdx.x >= HISTOGRAM_SIZE) {
+        return;
     }
+    // TODO: try with all threads
+    uint32_t sum = 0;
+    for (size_t i = 0; i < WARP_PER_BLOCK; ++i) {
+        sum += shared_hist[threadIdx.x + i * HISTOGRAM_SIZE] & COUNT_MASK;
+    }
+    result[blockIdx.x * HISTOGRAM_SIZE + threadIdx.x] = sum;
 }
 
-// объединить гистограммы, один блок на каждый NUM_BINS элементов
-__global__ void mergeHistogramKernel(unsigned* out_histogram, unsigned* partial_histograms, int histogram_count)
+__global__ void mergeHistogramKernel(uint32_t const* partial_histograms, uint32_t* out_histogram)
 {
-    unsigned sum = 0;
-    for (int i = threadIdx.x; i < histogram_count; i += 256)
-        sum += partial_histograms[blockIdx.x + i * NUM_BINS];
-    __shared__ unsigned data[NUM_BINS];
+    uint32_t sum = 0;
+    const auto SIZE = HISTOGRAM_SIZE * gridDim.x;
+    for (int i = threadIdx.x; i < gridDim.x; i += HISTOGRAM_SIZE) {
+        auto index = blockIdx.x + i * HISTOGRAM_SIZE;
+        if (index < SIZE) {
+            sum += partial_histograms[index];
+        }
+    }
+    __shared__ uint32_t data[HISTOGRAM_SIZE];
     data[threadIdx.x] = sum;
-    for (unsigned stride = NUM_BINS / 2; stride > 0; stride >>= 1) {
+    for (uint32_t stride = HISTOGRAM_SIZE / 2; stride > 0; stride >>= 1) {
         __syncthreads();
-        if (threadIdx.x < stride)
+        if (threadIdx.x < stride) {
             data[threadIdx.x] += data[threadIdx.x + stride];
+        }
     }
-    if (threadIdx.x == 0)
+    if (threadIdx.x == 0) {
         out_histogram[blockIdx.x] = data[0];
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-float createHistogramCpu(std::vector<unsigned> const& values, std::vector<unsigned>& histogram);
-void fillWithNormalDistribution(std::vector<unsigned>& values, size_t size);
-void writeVector(std::vector<unsigned> const& values, std::ostream& out);
-void createHistogram(unsigned* histogram, unsigned const* data, size_t n);
+float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram);
+float createHistogramGpu(std::vector<uint32_t> const& data, std::vector<uint32_t>& histogram);
+void fillWithNormalDistribution(std::vector<uint32_t>& values, size_t size);
+template <typename T>
+void writeVector(std::vector<T> const& values, std::ostream& out);
+void createOnce(size_t size);
+void createMany(size_t min_size, size_t max_size, size_t step);
 
-void task2()
+void Task2()
 {
-    auto values = std::vector<unsigned>();
-    fillWithNormalDistribution(values, 1024 * 1024);
-    auto cpu_histogram = std::vector<unsigned>();
-    createHistogramCpu(values, cpu_histogram);
-    //std::cout << "CPU: " << createHistogramCpu(values, cpu_histogram) << " ms" << std::endl;
-    auto gpu_histogram = std::vector<unsigned>(HISTOGRAM_SIZE);
-    createHistogram(gpu_histogram.data(), values.data(), values.size());
-    std::cout << std::equal(cpu_histogram.begin() + 1, cpu_histogram.end(),
-                            gpu_histogram.begin() + 1, gpu_histogram.end()) << std::endl;
-    //std::ofstream out("hist.txt");
-    //writeVector(cpu_histogram, out);
-    //out.close();
+    //createOnce(1024 * 1024);
+    createMany(1024, 2000 * 1024, 1024);
 }
 
-float createHistogramCpu(std::vector<unsigned> const& values, std::vector<unsigned>& histogram)
+float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram)
 {
-    auto start = std::chrono::high_resolution_clock::now();
     histogram.resize(HISTOGRAM_SIZE, 0u);
+    auto start = std::chrono::high_resolution_clock::now();
     for (auto item : values) {
         ++histogram[item];
     }
@@ -109,50 +104,90 @@ float createHistogramCpu(std::vector<unsigned> const& values, std::vector<unsign
     return ns.count() / 1.0e6f;
 }
 
-void fillWithNormalDistribution(std::vector<unsigned>& values, size_t size)
+float createHistogramGpu(std::vector<uint32_t> const& data, std::vector<uint32_t>& histogram)
+{
+    int num_partials = data.size() / (WARP_PER_BLOCK * WARP_SIZE);
+    auto partial_histograms = thrust::device_vector<uint32_t>(num_partials * HISTOGRAM_SIZE);
+    auto raw_partial = thrust::raw_pointer_cast(partial_histograms.data());
+    auto gpu_data = thrust::device_vector<uint32_t>(data);
+    auto gpu_hist = thrust::device_vector<uint32_t>(HISTOGRAM_SIZE);
+    cudaEvent_t start, end;
+    cudaEventCreate(&start);
+    cudaEventCreate(&end);
+    cudaEventRecord(start);
+    blockHistogram<<<num_partials, MAX_BLOCK_SIZE>>>(
+        raw_partial,
+        thrust::raw_pointer_cast(gpu_data.data()),
+        data.size());
+    mergeHistogramKernel<<<num_partials, HISTOGRAM_SIZE>>>(
+        raw_partial,
+        thrust::raw_pointer_cast(gpu_hist.data()));
+    cudaEventRecord(end);
+    cudaEventSynchronize(end);
+    float ms;
+    cudaEventElapsedTime(&ms, start, end);
+    histogram.resize(HISTOGRAM_SIZE, 0u);
+    thrust::copy(gpu_hist.begin(), gpu_hist.end(), histogram.begin());
+    return ms;
+}
+
+void fillWithNormalDistribution(std::vector<uint32_t>& values, size_t size)
 {
     values.resize(size);
     std::default_random_engine generator;
     std::normal_distribution<double> distribution(HISTOGRAM_SIZE / 2.0 + 1, HISTOGRAM_SIZE / 8.0);
     for (size_t i = 0; i < size; ++i) {
-        auto value = -1;
+        auto value = -1.0;
         while (value < 0.0 || value >= HISTOGRAM_SIZE) {
             value = distribution(generator);
         }
-        values[i] = static_cast<unsigned>(value);
+        values[i] = static_cast<uint32_t>(value);
     }
 }
 
-void writeVector(std::vector<unsigned> const& values, std::ostream& out)
+template <typename T>
+void writeVector(std::vector<T> const& values, std::ostream& out)
 {
-    for (auto item : values) {
+    for (auto const& item: values) {
         out << item << " ";
     }
     out << std::endl;
 }
 
-void createHistogram(unsigned* histogram, unsigned const* data, size_t n)
+void createOnce(size_t size)
 {
-    //int num_blocks = n / (WARP_N * WARP_SIZE);
-    int num_partials = 240;
-    unsigned* partial_histograms = nullptr;
-    //unsigned h[NUM_BINS] = {0};
-    //int* pdata = (int*)data;
-    //выделить память под гистограммы блока
-    cudaMalloc(&partial_histograms, num_partials * NUM_BINS * sizeof(unsigned));
-    unsigned* gpu_data;
-    cudaMalloc(&gpu_data, n * sizeof(unsigned));
-    cudaMemcpy(gpu_data, data, n * sizeof(unsigned), cudaMemcpyHostToDevice);
-    // построить гистограмму для каждого блока
-    histogramKernel<<<num_partials, WARP_N * WARP_SIZE>>>(partial_histograms, gpu_data, n);
+    auto values = std::vector<uint32_t>();
+    fillWithNormalDistribution(values, size);
+    auto cpu_histogram = std::vector<uint32_t>();
+    auto gpu_histogram = std::vector<uint32_t>();
 
-    unsigned* gpu_hist;
-    cudaMalloc(&gpu_hist, NUM_BINS * sizeof(unsigned));
-    //объдинить гистограммы отдельных блоков вместе
-    mergeHistogramKernel<<<NUM_BINS, 256>>>(gpu_hist, partial_histograms, num_partials);
-    cudaMemcpy(histogram, gpu_hist, NUM_BINS * sizeof(unsigned), cudaMemcpyDeviceToHost);
-    // освободить выделенную память
-    cudaFree(partial_histograms);
-    cudaFree(gpu_data);
-    cudaFree(gpu_hist);
+    std::cout << "CPU: " << createHistogramCpu(values, cpu_histogram) << " ms.\n";
+    std::cout << "GPU: " << createHistogramGpu(values, gpu_histogram) << " ms.\n";
+
+    std::cout << "Histograms are ";
+    if (!std::equal(cpu_histogram.begin(), cpu_histogram.end(),
+                    gpu_histogram.begin(), gpu_histogram.end())) {
+        std::cout << "not ";
+    }
+    std::cout << "equals.\n";
+    //std::ofstream out("hist.txt");
+    //writeVector(cpu_histogram, out);
+    //out.close();
+}
+
+void createMany(size_t min_size, size_t max_size, size_t step)
+{
+    std::vector<float> times_cpu, times_gpu;
+    for (int size = min_size; size <= max_size; size += step) {
+        std::vector<uint32_t> values;
+        fillWithNormalDistribution(values, size);
+        std::vector<uint32_t> histogram;
+        times_cpu.push_back(createHistogramCpu(values, histogram));
+        times_gpu.push_back(createHistogramGpu(values, histogram));
+    }
+    std::ofstream out("times2.txt");
+    writeVector(times_cpu, out);
+    out << ";";
+    writeVector(times_gpu, out);
+    out.close();
 }
