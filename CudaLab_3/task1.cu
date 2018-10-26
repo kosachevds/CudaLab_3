@@ -40,7 +40,7 @@ unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out);
 unsigned getMinGpu(std::vector<unsigned> const& values, float* ms_out);
 void fillRandom(std::vector<unsigned>& values, size_t size);
 
-void task1()
+void Task1()
 {
     std::vector<unsigned> values;
     fillRandom(values, 8192 * SHARED_BLOCK_SIZE);

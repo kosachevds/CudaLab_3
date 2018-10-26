@@ -1,13 +1,13 @@
 #include <cstdlib>
 #include <ctime>
 
-extern void task1();
-extern void task2();
+extern void Task1();
+extern void Task2();
 
 int main()
 {
     srand(time(nullptr));
-    //task1();
-    task2();
+    //Task1();
+    Task2();
     return 0;
 }
