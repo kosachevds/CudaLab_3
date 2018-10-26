@@ -14,70 +14,6 @@
 #define       WARP_SIZE  (32)
 #define  WARP_PER_BLOCK  (32) // MAX_BLOCK_SIZE / WARP_SIZE
 
-__device__ inline void addByte(volatile uint32_t* warp_hist, uint32_t index, uint32_t ttag)
-{
-    uint32_t count;
-    do {
-        // прочесть текущее значение счетчика и снять идентификатор нити
-        count = warp_hist[index] & COUNT_MASK;
-        // увеличить его на единицу и поставить свой идентификатор
-        count = ttag | (count + 1);
-        warp_hist[index] = count; //осуществить запись
-    } while (warp_hist[index] != count); // проверить, прошла ли запись
-}
-
-__global__ void blockHistogram(uint32_t* result, uint32_t const* data, size_t size)
-{
-    __shared__ uint32_t shared_hist[HISTOGRAM_SIZE * WARP_PER_BLOCK];  // 8192
-    for (size_t i = 0; i < HISTOGRAM_SIZE / WARP_SIZE; ++i) {
-        shared_hist[threadIdx.x + i * MAX_BLOCK_SIZE] = 0;
-    }
-    auto warp_index = threadIdx.x >> LOG2_WARP_SIZE;
-    auto idex_shift = warp_index * HISTOGRAM_SIZE;
-    auto tag = threadIdx.x << (32 - LOG2_WARP_SIZE);
-    __syncthreads();
-    auto global_tid = blockIdx.x * blockDim.x + threadIdx.x;
-    auto thread_count = blockDim.x * gridDim.x;
-    for (size_t i = global_tid; i < size; i += thread_count) {
-        addByte(shared_hist + idex_shift, data[i], tag);
-    }
-    __syncthreads();
-    if (threadIdx.x >= HISTOGRAM_SIZE) {
-        return;
-    }
-    // TODO: try with all threads
-    uint32_t sum = 0;
-    for (size_t i = 0; i < WARP_PER_BLOCK; ++i) {
-        sum += shared_hist[threadIdx.x + i * HISTOGRAM_SIZE] & COUNT_MASK;
-    }
-    result[blockIdx.x * HISTOGRAM_SIZE + threadIdx.x] = sum;
-}
-
-__global__ void mergeHistogramKernel(uint32_t const* partial_histograms, uint32_t* out_histogram)
-{
-    uint32_t sum = 0;
-    const auto SIZE = HISTOGRAM_SIZE * gridDim.x;
-    for (int i = threadIdx.x; i < gridDim.x; i += HISTOGRAM_SIZE) {
-        auto index = blockIdx.x + i * HISTOGRAM_SIZE;
-        if (index < SIZE) {
-            sum += partial_histograms[index];
-        }
-    }
-    __shared__ uint32_t data[HISTOGRAM_SIZE];
-    data[threadIdx.x] = sum;
-    for (uint32_t stride = HISTOGRAM_SIZE / 2; stride > 0; stride >>= 1) {
-        __syncthreads();
-        if (threadIdx.x < stride) {
-            data[threadIdx.x] += data[threadIdx.x + stride];
-        }
-    }
-    if (threadIdx.x == 0) {
-        out_histogram[blockIdx.x] = data[0];
-    }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
 float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram);
 float createHistogramGpu(std::vector<uint32_t> const& data, std::vector<uint32_t>& histogram);
 void fillWithNormalDistribution(std::vector<uint32_t>& values, size_t size);
@@ -85,11 +21,14 @@ template <typename T>
 void writeVector(std::vector<T> const& values, std::ostream& out);
 void createOnce(size_t size);
 void createMany(size_t min_size, size_t max_size, size_t step);
+__global__ void blockHistogram(uint32_t* result, uint32_t const* data, size_t size);
+__global__ void mergeHistogramKernel(uint32_t const* partial_histograms, uint32_t* out_histogram);
+__device__ inline void addByte(volatile uint32_t* warp_hist, uint32_t index, uint32_t tag);
 
 void Task2()
 {
     //createOnce(1024 * 1024);
-    createMany(1024, 1024 * 1024, 1024);
+    createMany(1024 * 256, 512 * 1024, 1024);
 }
 
 float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram)
@@ -191,4 +130,66 @@ void createMany(size_t min_size, size_t max_size, size_t step)
     out << ";";
     writeVector(times_gpu, out);
     out.close();
+}
+
+__global__ void blockHistogram(uint32_t* result, uint32_t const* data, size_t size)
+{
+    __shared__ uint32_t shared_hist[HISTOGRAM_SIZE * WARP_PER_BLOCK];  // 8192
+    for (size_t i = 0; i < HISTOGRAM_SIZE / WARP_SIZE; ++i) {
+        shared_hist[threadIdx.x + i * MAX_BLOCK_SIZE] = 0;
+    }
+    auto warp_index = threadIdx.x >> LOG2_WARP_SIZE;
+    auto idex_shift = warp_index * HISTOGRAM_SIZE;
+    auto tag = threadIdx.x << (32 - LOG2_WARP_SIZE);
+    __syncthreads();
+    auto global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+    auto thread_count = blockDim.x * gridDim.x;
+    for (size_t i = global_tid; i < size; i += thread_count) {
+        addByte(shared_hist + idex_shift, data[i], tag);
+    }
+    __syncthreads();
+    if (threadIdx.x >= HISTOGRAM_SIZE) {
+        return;
+    }
+    // TODO: try with all threads
+    uint32_t sum = 0;
+    for (size_t i = 0; i < WARP_PER_BLOCK; ++i) {
+        sum += shared_hist[threadIdx.x + i * HISTOGRAM_SIZE] & COUNT_MASK;
+    }
+    result[blockIdx.x * HISTOGRAM_SIZE + threadIdx.x] = sum;
+}
+
+__global__ void mergeHistogramKernel(uint32_t const* partial_histograms, uint32_t* out_histogram)
+{
+    uint32_t sum = 0;
+    const auto SIZE = HISTOGRAM_SIZE * gridDim.x;
+    for (int i = threadIdx.x; i < gridDim.x; i += HISTOGRAM_SIZE) {
+        auto index = blockIdx.x + i * HISTOGRAM_SIZE;
+        if (index < SIZE) {
+            sum += partial_histograms[index];
+        }
+    }
+    __shared__ uint32_t data[HISTOGRAM_SIZE];
+    data[threadIdx.x] = sum;
+    for (uint32_t stride = HISTOGRAM_SIZE / 2; stride > 0; stride >>= 1) {
+        __syncthreads();
+        if (threadIdx.x < stride) {
+            data[threadIdx.x] += data[threadIdx.x + stride];
+        }
+    }
+    if (threadIdx.x == 0) {
+        out_histogram[blockIdx.x] = data[0];
+    }
+}
+
+__device__ inline void addByte(volatile uint32_t* warp_hist, uint32_t index, uint32_t tag)
+{
+    uint32_t count;
+    do {
+        // прочесть текущее значение счетчика и снять идентификатор нити
+        count = warp_hist[index] & COUNT_MASK;
+        // увеличить его на единицу и поставить свой идентификатор
+        count = tag | (count + 1);
+        warp_hist[index] = count; //осуществить запись
+    } while (warp_hist[index] != count); // проверить, прошла ли запись
 }
