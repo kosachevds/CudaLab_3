@@ -89,7 +89,7 @@ void createMany(size_t min_size, size_t max_size, size_t step);
 void Task2()
 {
     //createOnce(1024 * 1024);
-    createMany(1024, 2000 * 1024, 1024);
+    createMany(1024, 1024 * 1024, 1024);
 }
 
 float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram)
@@ -178,12 +178,13 @@ void createOnce(size_t size)
 void createMany(size_t min_size, size_t max_size, size_t step)
 {
     std::vector<float> times_cpu, times_gpu;
-    for (int size = min_size; size <= max_size; size += step) {
-        std::vector<uint32_t> values;
+    for (auto size = min_size; size <= max_size; size += step) {
+        std::cout << size << ": " << max_size << std::endl;
+        std::vector<uint32_t> values, histogram;
         fillWithNormalDistribution(values, size);
-        std::vector<uint32_t> histogram;
         times_cpu.push_back(createHistogramCpu(values, histogram));
         times_gpu.push_back(createHistogramGpu(values, histogram));
+        system("cls");
     }
     std::ofstream out("times2.txt");
     writeVector(times_cpu, out);
