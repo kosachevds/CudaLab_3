@@ -23,25 +23,25 @@ static __global__ void reduceMin(unsigned const* inData, unsigned* outData);
 void Task1()
 {
     //createOnce(8192 * SHARED_BLOCK_SIZE);
-    createMany(SHARED_BLOCK_SIZE, 1024 * SHARED_BLOCK_SIZE, SHARED_BLOCK_SIZE);
+    createMany(SHARED_BLOCK_SIZE, 500 * SHARED_BLOCK_SIZE, SHARED_BLOCK_SIZE);
 }
 
 unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
 {
-    auto min_value = values.front();
+    //auto min_value = values.front();
     auto start = std::chrono::high_resolution_clock::now();
-    //auto min_value = *std::min_element(values.begin(), values.end());
+    auto min_value = *std::min_element(values.begin(), values.end());
     //std::this_thread::sleep_for(std::chrono::microseconds(10LL));
     //for (auto value: values) {
     //    if (value < min_value) {
     //        min_value = value;
     //    }
     //}
-    for (size_t i = 0; i < values.size(); ++i) {
-        if (values[i] < min_value) {
-            min_value = values[i];
-        }
-    }
+    //for (size_t i = 0; i < values.size(); ++i) {
+    //    if (values[i] < min_value) {
+    //        min_value = values[i];
+    //    }
+    //}
     auto end = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     if (ms_out != nullptr) {
@@ -53,20 +53,17 @@ unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
 unsigned getMinGpu(std::vector<unsigned> const& values, float* ms_out)
 {
     auto gpu_values = thrust::device_vector<unsigned>(values);
-    auto raw_gpu_values = thrust::raw_pointer_cast(gpu_values.data());
-
     cudaEvent_t start, end;
     cudaEventCreate(&start);
     cudaEventCreate(&end);
-    auto block_count = values.size() / SHARED_BLOCK_SIZE;
+    unsigned block_count = ceil(static_cast<double>(values.size()) / SHARED_BLOCK_SIZE);
     auto out_gpu = thrust::device_vector<unsigned>(block_count);
-    auto out_raw = thrust::raw_pointer_cast(out_gpu.data());
 
     cudaEventRecord(start);
     reduceMin<<<block_count, SHARED_BLOCK_SIZE>>>
-        (raw_gpu_values, out_raw);
+        (gpu_values.data().get(), out_gpu.data().get());
     cudaEventRecord(end);
-    cudaEventSynchronize(end);
+    auto error = cudaEventSynchronize(end);
     float ms1;
     cudaEventElapsedTime(&ms1, start, end);
 
@@ -111,9 +108,12 @@ void createMany(size_t min_size, size_t max_size, size_t step)
         std::vector<uint32_t> values, histogram;
         fillRandom(values, size);
         float ms;
-        getMinCpu(values, &ms);
+        auto min_cpu = getMinCpu(values, &ms);
         times_cpu.push_back(ms);
-        getMinGpu(values, &ms);
+        auto min_gpu = getMinGpu(values, &ms);
+        if (min_cpu != min_gpu) {
+            ms = -1;
+        }
         times_gpu.push_back(ms);
         system("cls");
     }
@@ -126,15 +126,10 @@ void createMany(size_t min_size, size_t max_size, size_t step)
 
 __global__ void reduceMin(unsigned const* inData, unsigned* outData)
 {
-    // TODO: as figure 3.8
     __shared__ unsigned shared [SHARED_BLOCK_SIZE];
     int tid = threadIdx.x;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    //if (i + blockDim.x < blockDim.x && inData[i + blockDim.x] < inData[i]) {
-    //    shared[tid] = inData[i + blockDim.x];
-    //} else {
-        shared[tid] = inData[i];
-    //}
+    shared[tid] = inData[i];
     __syncthreads();
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
