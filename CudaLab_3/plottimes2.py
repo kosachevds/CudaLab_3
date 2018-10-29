@@ -8,9 +8,12 @@ def main():
     with open(filename, "rt") as times_file:
         text = times_file.read()
     parts = text.split(";")
+    sizes = [int(x) for x in parts[0].split()]
+    parts = parts[1:]
     for p in zip(parts, ["CPU", "GPU"]):
-        pp.plot([float(x) for x in p[0].split()], label=p[1])
+        pp.plot(sizes, [float(x) for x in p[0].split()], label=p[1])
     pp.ylabel("times, ms")
+    pp.xlabel("sizes")
     pp.legend()
     pp.show()
 

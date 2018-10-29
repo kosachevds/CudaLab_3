@@ -103,9 +103,11 @@ void createOnce(size_t size)
 void createMany(size_t min_size, size_t max_size, size_t step)
 {
     std::vector<float> times_cpu, times_gpu;
+    std::vector<uint32_t> values;
+    std::vector<size_t> sizes;
     for (auto size = min_size; size <= max_size; size += step) {
         std::cout << size << ": " << max_size << std::endl;
-        std::vector<uint32_t> values, histogram;
+        sizes.push_back(size);
         fillRandom(values, size);
         float ms;
         auto min_cpu = getMinCpu(values, &ms);
@@ -118,6 +120,8 @@ void createMany(size_t min_size, size_t max_size, size_t step)
         system("cls");
     }
     std::ofstream out("times1.txt");
+    WriteVector(sizes, out);
+    out << ";";
     WriteVector(times_cpu, out);
     out << ";";
     WriteVector(times_gpu, out);

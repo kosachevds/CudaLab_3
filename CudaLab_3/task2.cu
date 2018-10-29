@@ -29,7 +29,7 @@ static __device__ void addByte(volatile uint32_t* warp_hist, uint32_t index, uin
 void Task2()
 {
     //createOnce(1024 * 1024);
-    createMany(1024 * 256, 512 * 1024, 1024);
+    createMany(256 * 1024, 512 * 1024, 1024);
 }
 
 float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram)
@@ -55,18 +55,16 @@ float createHistogramGpu(std::vector<uint32_t> const& data, std::vector<uint32_t
     cudaEventCreate(&start);
     cudaEventCreate(&end);
     cudaEventRecord(start);
-    blockHistogram<<<num_partials, MAX_BLOCK_SIZE>>>(
-        raw_partial,
-        thrust::raw_pointer_cast(gpu_data.data()),
-        data.size());
-    mergeHistogramKernel<<<num_partials, HISTOGRAM_SIZE>>>(
-        raw_partial,
-        thrust::raw_pointer_cast(gpu_hist.data()));
+    blockHistogram<<<num_partials, MAX_BLOCK_SIZE>>>(raw_partial,
+                                                     gpu_data.data().get(),
+                                                     data.size());
+    mergeHistogramKernel<<<num_partials, HISTOGRAM_SIZE>>>(raw_partial,
+                                                           gpu_hist.data().get());
     cudaEventRecord(end);
     cudaEventSynchronize(end);
     float ms;
     cudaEventElapsedTime(&ms, start, end);
-    histogram.resize(HISTOGRAM_SIZE, 0u);
+    histogram.resize(HISTOGRAM_SIZE);
     thrust::copy(gpu_hist.begin(), gpu_hist.end(), histogram.begin());
     return ms;
 }
@@ -116,15 +114,19 @@ void createOnce(size_t size)
 void createMany(size_t min_size, size_t max_size, size_t step)
 {
     std::vector<float> times_cpu, times_gpu;
+    std::vector<size_t> sizes;
+    std::vector<uint32_t> values, histogram;
     for (auto size = min_size; size <= max_size; size += step) {
         std::cout << size << ": " << max_size << std::endl;
-        std::vector<uint32_t> values, histogram;
+        sizes.push_back(size);
         fillWithNormalDistribution(values, size);
         times_cpu.push_back(createHistogramCpu(values, histogram));
         times_gpu.push_back(createHistogramGpu(values, histogram));
         system("cls");
     }
     std::ofstream out("times2.txt");
+    WriteVector(sizes, out);
+    out << ";";
     WriteVector(times_cpu, out);
     out << ";";
     WriteVector(times_gpu, out);
