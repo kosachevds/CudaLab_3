@@ -1,3 +1,4 @@
+#include "common.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <thrust/device_vector.h>
@@ -13,9 +14,6 @@
 #define  LOG2_WARP_SIZE  (5)
 #define       WARP_SIZE  (32)
 #define  WARP_PER_BLOCK  (32) // MAX_BLOCK_SIZE / WARP_SIZE
-
-template <typename T>
-void WriteVector(std::vector<T> const& values, std::ostream& out);
 
 static float createHistogramCpu(std::vector<uint32_t> const& values, std::vector<uint32_t>& histogram);
 static float createHistogramGpu(std::vector<uint32_t> const& data, std::vector<uint32_t>& histogram);
@@ -83,15 +81,6 @@ void fillWithNormalDistribution(std::vector<uint32_t>& values, size_t size)
     }
 }
 
-template <typename T>
-void WriteVector(std::vector<T> const& values, std::ostream& out)
-{
-    for (auto const& item: values) {
-        out << item << " ";
-    }
-    out << std::endl;
-}
-
 void createOnce(size_t size)
 {
     std::vector<uint32_t> values, cpu_histogram, gpu_histogram;
@@ -106,9 +95,9 @@ void createOnce(size_t size)
         std::cout << "not ";
     }
     std::cout << "equals.\n";
-    //std::ofstream out("hist.txt");
-    //writeVector(cpu_histogram, out);
-    //out.close();
+    std::ofstream out("hist.txt");
+    WriteVector(cpu_histogram, out);
+    out.close();
 }
 
 void createMany(size_t min_size, size_t max_size, size_t step)

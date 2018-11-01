@@ -1,3 +1,4 @@
+#include "common.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <thrust/device_vector.h>
@@ -10,9 +11,6 @@
 
 const size_t SHARED_BLOCK_SIZE = 1024;
 
-template <typename T>
-extern void WriteVector(std::vector<T> const& values, std::ostream& out);
-
 static unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out);
 static unsigned getMinGpu(std::vector<unsigned> const& values, float* ms_out);
 static void fillRandom(std::vector<unsigned>& values, size_t size);
@@ -23,7 +21,7 @@ static __global__ void reduceMin(unsigned const* inData, unsigned* outData);
 void Task1()
 {
     //createOnce(8192 * SHARED_BLOCK_SIZE);
-    createMany(SHARED_BLOCK_SIZE, 500 * SHARED_BLOCK_SIZE, SHARED_BLOCK_SIZE);
+    createMany(SHARED_BLOCK_SIZE, 256 * SHARED_BLOCK_SIZE, SHARED_BLOCK_SIZE);
 }
 
 unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
@@ -31,17 +29,16 @@ unsigned getMinCpu(std::vector<unsigned> const& values, float* ms_out)
     //auto min_value = values.front();
     auto start = std::chrono::high_resolution_clock::now();
     auto min_value = *std::min_element(values.begin(), values.end());
-    //std::this_thread::sleep_for(std::chrono::microseconds(10LL));
     //for (auto value: values) {
     //    if (value < min_value) {
     //        min_value = value;
     //    }
     //}
-    //for (size_t i = 0; i < values.size(); ++i) {
-    //    if (values[i] < min_value) {
-    //        min_value = values[i];
-    //    }
-    //}
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (values[i] < min_value) {
+            min_value = values[i];
+        }
+    }
     auto end = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     if (ms_out != nullptr) {

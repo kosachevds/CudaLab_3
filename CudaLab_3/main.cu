@@ -7,7 +7,7 @@ extern void Task2();
 int main()
 {
     srand(time(nullptr));
-    Task1();
-    //Task2();
+    //Task1();
+    Task2();
     return 0;
 }
